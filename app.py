@@ -12,17 +12,18 @@ if not api_key:
     st.error("API key not found. Please set the API_KEY environment variable.")
     st.stop()
 
-# Initialize OpenAI client without any additional configurations
-try:
-    client = OpenAI(api_key=api_key)
-except Exception as e:
-    st.error(f"Error initializing OpenAI client: {str(e)}")
-    st.stop()
+# Initialize OpenAI client
+client = OpenAI(api_key=api_key)
 
 # Page config
 st.set_page_config(page_title="My GPT Chat", page_icon="🤖")
 
-# Title and description
+# Display logo - using relative path
+try:
+    st.image("assets/images/gbk_logo.svg", width=150)
+except Exception as e:
+    st.error(f"Error loading image: {str(e)}")
+
 st.title("Gulf Bank GPT")
 st.markdown("---")
 
