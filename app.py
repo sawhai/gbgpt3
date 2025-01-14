@@ -1,7 +1,17 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Sun Jan 12 22:41:41 2025
+
+@author: ha
+"""
 import streamlit as st
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
+from PyPDF2 import PdfReader
+import docx
+import pandas as pd
 
 # Load environment variables
 load_dotenv()
@@ -15,111 +25,87 @@ if not api_key:
 # Initialize OpenAI client
 client = OpenAI(api_key=api_key)
 
-# Custom CSS for the chat interface
-st.markdown("""
-    <style>
-        /* Hide Streamlit's default footer */
-        footer {display: none}
-        
-        /* Container styling */
-        .stApp {
-            background-color: white;
-        }
-        
-        /* Chat message container */
-        .chat-message {
-            padding: 1rem 1.5rem;
-            margin: 0.5rem 0;
-            border-radius: 0.5rem;
-        }
-        
-        /* User message styling */
-        .user-message {
-            background-color: #f7f7f8;
-        }
-        
-        /* Assistant message styling */
-        .assistant-message {
-            background-color: white;
-            border-top: 1px solid #e5e5e5;
-            border-bottom: 1px solid #e5e5e5;
-        }
-        
-        /* Input container styling */
-        .stTextInput {
-            position: fixed;
-            bottom: 0;
-            background-color: white;
-            padding: 1rem 0;
-            left: 0;
-            right: 0;
-            z-index: 100;
-            border-top: 1px solid #e5e5e5;
-        }
-        
-        /* Add padding at the bottom to prevent content from being hidden behind input */
-        .main-container {
-            padding-bottom: 5rem;
-        }
-    </style>
-""", unsafe_allow_html=True)
-
 # Page config
 st.set_page_config(page_title="My GPT Chat", page_icon="🤖")
 
-# Display logo
+# Display logo - using relative path
 try:
     st.image("assets/images/gbk_logo.svg", width=150)
 except Exception as e:
     st.error(f"Error loading image: {str(e)}")
 
 st.title("Gulf Bank GPT")
+st.markdown("---")
 
 # Initialize chat history
 if "messages" not in st.session_state:
     st.session_state["messages"] = [
-        {"role": "system", "content": "You are a helpful assistant."}
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "assistant", "content": "I am your AI assistant at Gulf Bank, how can I help you today?"}
     ]
+    st.session_state["file_context"] = None  # Store file content here
+    st.session_state["user_input"] = ""  # Store user input
 
-# Create a container for the chat messages
-with st.container():
-    st.markdown('<div class="main-container">', unsafe_allow_html=True)
-    
-    # Display chat messages
-    for msg in st.session_state["messages"]:
-        if msg["role"] != "system":
-            if msg["role"] == "user":
-                st.markdown(f'<div class="chat-message user-message"><strong>You:</strong> {msg["content"]}</div>', 
-                          unsafe_allow_html=True)
-            elif msg["role"] == "assistant":
-                st.markdown(f'<div class="chat-message assistant-message"><strong>Assistant:</strong> {msg["content"]}</div>', 
-                          unsafe_allow_html=True)
-    
-    st.markdown('</div>', unsafe_allow_html=True)
+# Function to extract text from uploaded file
+def extract_text(file):
+    if file.name.endswith(".pdf"):
+        pdf_reader = PdfReader(file)
+        return "\n".join(page.extract_text() for page in pdf_reader.pages)
+    elif file.name.endswith(".docx"):
+        doc = docx.Document(file)
+        return "\n".join(paragraph.text for paragraph in doc.paragraphs)
+    elif file.name.endswith(".txt"):
+        return file.read().decode("utf-8")
+    elif file.name.endswith((".xls", ".xlsx")):
+        df = pd.read_excel(file)
+        return df.to_string(index=False)  # Convert the DataFrame to a string
+    else:
+        st.error("Unsupported file format. Please upload a PDF, DOCX, TXT, or Excel file.")
+        return None
 
-# Create the input box at the bottom
-with st.container():
-    user_input = st.text_input("Your message:", key="user_input", value="")
-    
-    # Handle the input
+# Function to handle sending messages
+def send_message():
+    user_input = st.session_state["user_input"]
     if user_input.strip():
         # Add user message
         st.session_state["messages"].append({"role": "user", "content": user_input})
-        
+        st.session_state["user_input"] = ""  # Clear input box
+
+        # Prepare context for the OpenAI API
+        context = st.session_state["file_context"] if st.session_state.get("file_context") else ""
+        messages = st.session_state["messages"].copy()
+        if context:
+            messages.append({"role": "system", "content": f"Context from uploaded file: {context}"})
+
         try:
             # Call OpenAI API
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
-                messages=st.session_state["messages"]
+                messages=messages
             )
             assistant_reply = response.choices[0].message.content
             st.session_state["messages"].append({"role": "assistant", "content": assistant_reply})
-            
-            # Clear the input
-            st.session_state["user_input"] = ""
-            
-            # Rerun to update the chat
-            st.rerun()
-            
         except Exception as e:
             st.error(f"Error calling OpenAI API: {str(e)}")
+
+# Reverse chat interface layout
+with st.container():
+    # Display message history in reverse order
+    chat_placeholder = st.empty()  # Placeholder for chat history
+    chat_history = [
+        f"**You:** {msg['content']}" if msg["role"] == "user" else f"**Assistant:** {msg['content']}"
+        for msg in st.session_state["messages"]
+        if msg["role"] != "system"
+    ]
+    chat_placeholder.markdown("\n\n".join(reversed(chat_history)))
+
+    # File upload at the bottom
+    uploaded_file = st.file_uploader("Upload a document (PDF, DOCX, TXT, or Excel):", type=["pdf", "docx", "txt", "xls", "xlsx"])
+    if uploaded_file:
+        file_content = extract_text(uploaded_file)
+        if file_content:
+            st.session_state["file_context"] = file_content
+            st.success("File uploaded successfully. You can now ask questions about its content.")
+
+    # Chat input below file uploader
+    st.text_input("Your message:", value=st.session_state["user_input"], on_change=send_message, key="user_input")
